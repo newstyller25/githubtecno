@@ -203,7 +203,7 @@ const ProbabilityCircle = ({ percentage, color, size = 120, label }) => {
 };
 
 // Color Ball Component
-const ColorBall = ({ color, size = "md", onClick, active }) => {
+const ColorBall = ({ color, size = "md", onClick, active, asDiv = false }) => {
   const sizeMap = {
     sm: "w-6 h-6",
     md: "w-10 h-10",
@@ -217,8 +217,10 @@ const ColorBall = ({ color, size = "md", onClick, active }) => {
     white: "color-white",
   };
 
+  const Component = asDiv ? 'div' : 'button';
+
   return (
-    <button
+    <Component
       onClick={onClick}
       data-testid={`color-ball-${color}`}
       className={`
