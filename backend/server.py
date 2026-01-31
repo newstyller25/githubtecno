@@ -593,9 +593,13 @@ async def get_blaze_status():
 # ==================== SIMULATOR (Fallback) ====================
 
 async def run_simulator():
-    """Background task to simulate game results"""
+    """Background task to simulate game results (fallback quando Blaze não conecta)"""
     while True:
         await asyncio.sleep(30)  # New result every 30 seconds
+        
+        # Só simular se Blaze não estiver conectada
+        if blaze_state["connected"]:
+            continue
         
         # Generate random result with realistic probabilities
         rand = random.random()
@@ -617,6 +621,14 @@ async def run_simulator():
         
         # Update pending predictions
         await update_predictions_with_result(color)
+        
+        # Broadcast to clients
+        await broadcast_to_clients({
+            "type": "new_result",
+            "color": color,
+            "simulated": True,
+            "timestamp": result["timestamp"]
+        })
 
 async def update_predictions_with_result(actual_color: str):
     """Update pending predictions with the actual result"""
