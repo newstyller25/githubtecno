@@ -724,6 +724,8 @@ const DashboardPage = () => {
             refreshPrediction={refreshPrediction}
             refreshing={refreshing}
             addResult={addResult}
+            blazeStatus={blazeStatus}
+            gameStatus={gameStatus}
           />
         )}
 
