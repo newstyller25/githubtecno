@@ -392,8 +392,11 @@ def generate_fallback_analysis(colors: List[str], sequence_info: str) -> str:
 
 # ==================== BLAZE WEBSOCKET INTEGRATION ====================
 
-# WebSocket URL da Blaze
-BLAZE_WS_URL = "wss://api-v2.blaze.com/replication/?EIO=3&transport=websocket"
+# URLs da Blaze para tentar conexão
+BLAZE_WS_URLS = [
+    "wss://api-v2.blaze.com/replication/?EIO=3&transport=websocket",
+    "wss://api-singlegames.blaze.com/replication/?EIO=3&transport=websocket",
+]
 
 # Armazenar último resultado da Blaze
 blaze_state = {
@@ -402,7 +405,8 @@ blaze_state = {
     "last_roll": None,
     "status": "disconnected",
     "connected": False,
-    "history": []
+    "history": [],
+    "connection_attempts": 0
 }
 
 # Clientes WebSocket conectados
@@ -421,37 +425,47 @@ async def connect_to_blaze():
     """Conecta ao WebSocket da Blaze e escuta resultados em tempo real"""
     global blaze_state
     
+    url_index = 0
+    
     while True:
         try:
-            logger.info("Conectando ao WebSocket da Blaze...")
+            url = BLAZE_WS_URLS[url_index % len(BLAZE_WS_URLS)]
+            blaze_state["connection_attempts"] += 1
+            logger.info(f"Conectando ao WebSocket da Blaze ({url_index + 1}/{len(BLAZE_WS_URLS)})...")
             blaze_state["status"] = "connecting"
             
             # Headers customizados
             headers = {
                 "Origin": "https://blaze.com",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             
             async with websockets.connect(
-                BLAZE_WS_URL,
+                url,
                 additional_headers=headers,
-                ping_interval=25,
-                ping_timeout=60
+                ping_interval=20,
+                ping_timeout=30,
+                close_timeout=10
             ) as ws:
                 blaze_state["connected"] = True
                 blaze_state["status"] = "connected"
                 logger.info("Conectado ao WebSocket da Blaze!")
                 
-                # Enviar subscription para Double
-                await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_v2"}}]')
-                
+                # Aguardar mensagem inicial e enviar subscription
                 async for message in ws:
                     try:
-                        # Log all messages for debugging
-                        logger.debug(f"Blaze MSG: {message[:200] if len(message) > 200 else message}")
+                        # Log para debug
+                        if len(message) < 500:
+                            logger.debug(f"Blaze MSG: {message}")
+                        
+                        # Handle socket.io messages
+                        if message.startswith("0"):
+                            # Connection established, send subscription
+                            await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_v2"}}]')
+                            logger.info("Enviado subscribe para double_v2")
                         
                         # Parse mensagem da Blaze
-                        if message.startswith("42"):
+                        elif message.startswith("42"):
                             data_str = message[2:]
                             data = json.loads(data_str)
                             
@@ -512,17 +526,35 @@ async def connect_to_blaze():
                                         "data": game_data
                                     })
                         
-                        # Handle socket.io messages
-                        elif message.startswith("0"):
-                            # Connection established, send subscription
-                            await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_v2"}}]')
-                            logger.info("Enviado subscribe para double_v2")
-                        
-                        # Responder pings
+                        # Responder pings do socket.io
                         elif message == "2":
                             await ws.send("3")
-                        elif message == "3":
-                            pass  # Pong received
+                        elif message.startswith("40"):
+                            # Connected to namespace
+                            await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_v2"}}]')
+                            logger.info("Namespace conectado, enviando subscribe")
+                            
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"JSON decode error: {e}")
+                    except Exception as e:
+                        logger.error(f"Erro ao processar mensagem Blaze: {e}")
+                        
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"Conexão Blaze fechada: {e}")
+            blaze_state["connected"] = False
+            blaze_state["status"] = "disconnected"
+        except Exception as e:
+            logger.error(f"Erro na conexão Blaze: {e}")
+            blaze_state["connected"] = False
+            blaze_state["status"] = "error"
+        
+        # Tentar próxima URL
+        url_index += 1
+        
+        # Aguardar antes de reconectar (mais tempo após muitas tentativas)
+        wait_time = min(30, 5 + (blaze_state["connection_attempts"] // 3) * 5)
+        logger.info(f"Reconectando à Blaze em {wait_time} segundos...")
+        await asyncio.sleep(wait_time)
                             
                     except json.JSONDecodeError:
                         pass
