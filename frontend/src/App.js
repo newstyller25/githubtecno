@@ -746,16 +746,41 @@ const DashboardPage = () => {
 };
 
 // Dashboard Content
-const DashboardContent = ({ prediction, results, stats, settings, refreshPrediction, refreshing, addResult }) => {
+const DashboardContent = ({ prediction, results, stats, settings, refreshPrediction, refreshing, addResult, blazeStatus, gameStatus }) => {
   return (
     <div className="space-y-6 animate-fadeIn">
-      {/* Header */}
+      {/* Header with Blaze Status */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold">Análise Atual</h2>
-          <p className="text-zinc-400 text-sm">
-            Atualizado: {prediction?.timestamp ? new Date(prediction.timestamp).toLocaleTimeString('pt-BR') : '-'}
-          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-zinc-400 text-sm">
+              Atualizado: {prediction?.timestamp ? new Date(prediction.timestamp).toLocaleTimeString('pt-BR') : '-'}
+            </p>
+            {/* Blaze Connection Status */}
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+              blazeStatus?.connected 
+                ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                blazeStatus?.connected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
+              }`}></span>
+              {blazeStatus?.connected ? 'BLAZE AO VIVO' : 'MODO SIMULAÇÃO'}
+            </div>
+            {/* Game Status */}
+            {blazeStatus?.connected && (
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+                gameStatus === 'rolling' 
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse' 
+                  : gameStatus === 'complete'
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                  : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+              }`}>
+                {gameStatus === 'rolling' ? 'GIRANDO...' : gameStatus === 'complete' ? 'FINALIZADO' : 'AGUARDANDO'}
+              </div>
+            )}
+          </div>
         </div>
         <Button
           onClick={refreshPrediction}
