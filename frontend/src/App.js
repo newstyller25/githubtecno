@@ -520,8 +520,8 @@ const DashboardPage = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [predRes, histRes, resultsRes, statsRes, settingsRes, chartRes] = await Promise.all([
-        authAxios.get("/prediction"),
+      // First load fast data
+      const [histRes, resultsRes, statsRes, settingsRes, chartRes] = await Promise.all([
         authAxios.get("/history?limit=20"),
         authAxios.get("/results?limit=30"),
         authAxios.get("/statistics"),
@@ -529,15 +529,18 @@ const DashboardPage = () => {
         authAxios.get("/chart-data?days=7"),
       ]);
 
-      setPrediction(predRes.data);
       setHistory(histRes.data);
       setResults(resultsRes.data);
       setStats(statsRes.data);
       setSettings(settingsRes.data);
       setChartData(chartRes.data);
+      setLoading(false);
+
+      // Then load AI prediction (slower)
+      const predRes = await authAxios.get("/prediction");
+      setPrediction(predRes.data);
     } catch (error) {
       toast.error("Erro ao carregar dados");
-    } finally {
       setLoading(false);
     }
   }, [authAxios]);
