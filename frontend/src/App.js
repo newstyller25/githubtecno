@@ -835,7 +835,7 @@ const DashboardContent = ({ prediction, results, stats, settings, refreshPredict
                   data-testid={`add-result-${color}`}
                   className="group flex flex-col items-center gap-2"
                 >
-                  <ColorBall color={color} size="lg" onClick={() => {}} />
+                  <ColorBall color={color} size="lg" asDiv />
                   <span className="text-xs text-zinc-500 uppercase group-hover:text-white transition-colors">
                     {color === 'red' ? 'Vermelho' : color === 'black' ? 'Preto' : 'Branco'}
                   </span>
