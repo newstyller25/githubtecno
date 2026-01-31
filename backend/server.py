@@ -426,12 +426,15 @@ async def connect_to_blaze():
             logger.info("Conectando ao WebSocket da Blaze...")
             blaze_state["status"] = "connecting"
             
+            # Headers customizados
+            headers = {
+                "Origin": "https://blaze.com",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+            
             async with websockets.connect(
                 BLAZE_WS_URL,
-                extra_headers={
-                    "Origin": "https://blaze.com",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                },
+                additional_headers=headers,
                 ping_interval=25,
                 ping_timeout=60
             ) as ws:
