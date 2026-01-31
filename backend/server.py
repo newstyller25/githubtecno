@@ -447,6 +447,9 @@ async def connect_to_blaze():
                 
                 async for message in ws:
                     try:
+                        # Log all messages for debugging
+                        logger.debug(f"Blaze MSG: {message[:200] if len(message) > 200 else message}")
+                        
                         # Parse mensagem da Blaze
                         if message.startswith("42"):
                             data_str = message[2:]
@@ -454,6 +457,7 @@ async def connect_to_blaze():
                             
                             if len(data) >= 2 and data[0] == "double.tick":
                                 game_data = data[1]
+                                logger.info(f"Double tick: status={game_data.get('status')}, roll={game_data.get('roll')}")
                                 
                                 # Verificar se o jogo completou
                                 if game_data.get("status") == "complete":
@@ -507,6 +511,12 @@ async def connect_to_blaze():
                                         "status": status,
                                         "data": game_data
                                     })
+                        
+                        # Handle socket.io messages
+                        elif message.startswith("0"):
+                            # Connection established, send subscription
+                            await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_v2"}}]')
+                            logger.info("Enviado subscribe para double_v2")
                         
                         # Responder pings
                         elif message == "2":
