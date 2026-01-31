@@ -944,14 +944,19 @@ const DashboardContent = ({ prediction, results, stats, settings, refreshPredict
           </CardContent>
         </Card>
 
-        {/* Add Result */}
+        {/* Add Result - Improved with manual entry info */}
         <Card className="bg-[#121214] border-zinc-800">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2">
               <Plus size={20} className="text-blue-500" />
               Adicionar Resultado
             </CardTitle>
-            <CardDescription>Registre o resultado da última jogada</CardDescription>
+            <CardDescription>
+              {blazeStatus?.connected 
+                ? "Resultados sendo recebidos automaticamente da Blaze"
+                : "Clique na cor do resultado da Blaze para registrar"
+              }
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex justify-center gap-6">
@@ -979,6 +984,15 @@ const DashboardContent = ({ prediction, results, stats, settings, refreshPredict
                 ))}
               </div>
             </div>
+
+            {/* Instructions */}
+            {!blazeStatus?.connected && (
+              <div className="mt-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                <p className="text-xs text-blue-300">
+                  <strong>Dica:</strong> Acompanhe a Blaze e clique na cor quando sair o resultado para atualizar o sinal e confirmar WIN/LOSS automaticamente.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
