@@ -390,7 +390,207 @@ def generate_fallback_analysis(colors: List[str], sequence_info: str) -> str:
     
     return analysis
 
-# ==================== SIMULATOR ====================
+# ==================== BLAZE WEBSOCKET INTEGRATION ====================
+
+# WebSocket URL da Blaze
+BLAZE_WS_URL = "wss://api-v2.blaze.com/replication/?EIO=3&transport=websocket"
+
+# Armazenar último resultado da Blaze
+blaze_state = {
+    "last_result": None,
+    "last_color": None,
+    "last_roll": None,
+    "status": "disconnected",
+    "connected": False,
+    "history": []
+}
+
+# Clientes WebSocket conectados
+connected_clients: Set[WebSocket] = set()
+
+def parse_blaze_color(roll: int) -> str:
+    """Converte o número do roll para cor"""
+    if roll == 0:
+        return "white"
+    elif roll in [1, 2, 3, 4, 5, 6, 7]:
+        return "red"
+    else:  # 8, 9, 10, 11, 12, 13, 14
+        return "black"
+
+async def connect_to_blaze():
+    """Conecta ao WebSocket da Blaze e escuta resultados em tempo real"""
+    global blaze_state
+    
+    while True:
+        try:
+            logger.info("Conectando ao WebSocket da Blaze...")
+            blaze_state["status"] = "connecting"
+            
+            async with websockets.connect(
+                BLAZE_WS_URL,
+                extra_headers={
+                    "Origin": "https://blaze.com",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                },
+                ping_interval=25,
+                ping_timeout=60
+            ) as ws:
+                blaze_state["connected"] = True
+                blaze_state["status"] = "connected"
+                logger.info("Conectado ao WebSocket da Blaze!")
+                
+                # Enviar subscription para Double
+                await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_v2"}}]')
+                
+                async for message in ws:
+                    try:
+                        # Parse mensagem da Blaze
+                        if message.startswith("42"):
+                            data_str = message[2:]
+                            data = json.loads(data_str)
+                            
+                            if len(data) >= 2 and data[0] == "double.tick":
+                                game_data = data[1]
+                                
+                                # Verificar se o jogo completou
+                                if game_data.get("status") == "complete":
+                                    roll = game_data.get("roll")
+                                    if roll is not None:
+                                        color = parse_blaze_color(roll)
+                                        
+                                        # Atualizar estado
+                                        blaze_state["last_result"] = game_data
+                                        blaze_state["last_color"] = color
+                                        blaze_state["last_roll"] = roll
+                                        
+                                        # Salvar no histórico (máx 100)
+                                        blaze_state["history"].insert(0, {
+                                            "color": color,
+                                            "roll": roll,
+                                            "timestamp": datetime.now(timezone.utc).isoformat()
+                                        })
+                                        blaze_state["history"] = blaze_state["history"][:100]
+                                        
+                                        # Salvar no banco de dados
+                                        result_doc = {
+                                            "id": str(uuid.uuid4()),
+                                            "color": color,
+                                            "roll": roll,
+                                            "blaze_id": game_data.get("id"),
+                                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                                            "simulated": False,
+                                            "source": "blaze_live"
+                                        }
+                                        await db.game_results.insert_one(result_doc)
+                                        
+                                        # Atualizar previsões pendentes
+                                        await update_predictions_with_result(color)
+                                        
+                                        # Notificar clientes conectados
+                                        await broadcast_to_clients({
+                                            "type": "new_result",
+                                            "color": color,
+                                            "roll": roll,
+                                            "timestamp": result_doc["timestamp"]
+                                        })
+                                        
+                                        logger.info(f"Blaze Double: {color.upper()} (roll: {roll})")
+                                
+                                # Status do jogo mudou (waiting, rolling, complete)
+                                status = game_data.get("status")
+                                if status:
+                                    await broadcast_to_clients({
+                                        "type": "game_status",
+                                        "status": status,
+                                        "data": game_data
+                                    })
+                        
+                        # Responder pings
+                        elif message == "2":
+                            await ws.send("3")
+                        elif message == "3":
+                            pass  # Pong received
+                            
+                    except json.JSONDecodeError:
+                        pass
+                    except Exception as e:
+                        logger.error(f"Erro ao processar mensagem Blaze: {e}")
+                        
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"Conexão Blaze fechada: {e}")
+            blaze_state["connected"] = False
+            blaze_state["status"] = "disconnected"
+        except Exception as e:
+            logger.error(f"Erro na conexão Blaze: {e}")
+            blaze_state["connected"] = False
+            blaze_state["status"] = "error"
+        
+        # Aguardar antes de reconectar
+        logger.info("Reconectando à Blaze em 5 segundos...")
+        await asyncio.sleep(5)
+
+async def broadcast_to_clients(message: dict):
+    """Envia mensagem para todos os clientes WebSocket conectados"""
+    if connected_clients:
+        message_str = json.dumps(message)
+        disconnected = set()
+        for client in connected_clients:
+            try:
+                await client.send_text(message_str)
+            except:
+                disconnected.add(client)
+        connected_clients.difference_update(disconnected)
+
+# ==================== WEBSOCKET ENDPOINT ====================
+
+@app.websocket("/ws/live")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint para receber atualizações em tempo real"""
+    await websocket.accept()
+    connected_clients.add(websocket)
+    
+    try:
+        # Enviar estado atual ao conectar
+        await websocket.send_text(json.dumps({
+            "type": "connection",
+            "status": blaze_state["status"],
+            "connected": blaze_state["connected"],
+            "last_color": blaze_state["last_color"],
+            "last_roll": blaze_state["last_roll"],
+            "history": blaze_state["history"][:20]
+        }))
+        
+        # Manter conexão aberta
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                # Processar comandos do cliente se necessário
+                if data == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+            except asyncio.TimeoutError:
+                # Enviar ping para manter conexão
+                await websocket.send_text(json.dumps({"type": "ping"}))
+                
+    except WebSocketDisconnect:
+        pass
+    finally:
+        connected_clients.discard(websocket)
+
+# ==================== BLAZE STATUS ENDPOINT ====================
+
+@api_router.get("/blaze/status")
+async def get_blaze_status():
+    """Retorna o status da conexão com a Blaze"""
+    return {
+        "connected": blaze_state["connected"],
+        "status": blaze_state["status"],
+        "last_color": blaze_state["last_color"],
+        "last_roll": blaze_state["last_roll"],
+        "history_count": len(blaze_state["history"]),
+        "recent_results": blaze_state["history"][:10]
+    }
+
+# ==================== SIMULATOR (Fallback) ====================
 
 async def run_simulator():
     """Background task to simulate game results"""
