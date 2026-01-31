@@ -937,7 +937,10 @@ async def startup():
     await db.predictions.create_index("timestamp")
     await db.game_results.create_index("timestamp")
     
-    # Start simulator in background
+    # Iniciar conexão com Blaze WebSocket
+    asyncio.create_task(connect_to_blaze())
+    
+    # Start simulator como fallback (caso Blaze não conecte)
     asyncio.create_task(run_simulator())
     logger.info("Blaze AI Bot started successfully")
 
