@@ -519,6 +519,106 @@ const DashboardPage = () => {
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [blazeStatus, setBlazeStatus] = useState({ connected: false, status: 'disconnected' });
+  const [gameStatus, setGameStatus] = useState('waiting');
+
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    const wsUrl = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://');
+    let ws = null;
+    let reconnectTimeout = null;
+
+    const connectWebSocket = () => {
+      try {
+        ws = new WebSocket(`${wsUrl}/ws/live`);
+
+        ws.onopen = () => {
+          console.log('WebSocket conectado!');
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'connection') {
+              setBlazeStatus({
+                connected: data.connected,
+                status: data.status
+              });
+              if (data.history && data.history.length > 0) {
+                setResults(prev => {
+                  const newResults = data.history.map(h => ({
+                    id: h.timestamp,
+                    color: h.color,
+                    timestamp: h.timestamp
+                  }));
+                  return [...newResults.slice(0, 30)];
+                });
+              }
+            }
+            
+            if (data.type === 'new_result') {
+              // Novo resultado da Blaze!
+              toast.success(`Resultado: ${data.color.toUpperCase()}`, {
+                icon: data.color === 'red' ? '🔴' : data.color === 'black' ? '⚫' : '⚪',
+              });
+              
+              // Atualizar lista de resultados
+              setResults(prev => [{
+                id: data.timestamp,
+                color: data.color,
+                timestamp: data.timestamp,
+                simulated: data.simulated
+              }, ...prev.slice(0, 29)]);
+              
+              // Play sound if enabled
+              if (settings?.sound_enabled) {
+                const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2televijgqNv8uocg");
+                audio.volume = 0.3;
+                audio.play().catch(() => {});
+              }
+              
+              // Recarregar dados após novo resultado
+              fetchData();
+            }
+            
+            if (data.type === 'game_status') {
+              setGameStatus(data.status);
+              if (data.status === 'rolling') {
+                toast.info('🎰 Girando...', { duration: 2000 });
+              }
+            }
+            
+            if (data.type === 'ping') {
+              ws.send('ping');
+            }
+          } catch (e) {
+            console.error('Erro ao processar mensagem WebSocket:', e);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log('WebSocket desconectado, reconectando...');
+          setBlazeStatus({ connected: false, status: 'disconnected' });
+          reconnectTimeout = setTimeout(connectWebSocket, 3000);
+        };
+
+        ws.onerror = (error) => {
+          console.error('Erro WebSocket:', error);
+        };
+      } catch (e) {
+        console.error('Erro ao conectar WebSocket:', e);
+        reconnectTimeout = setTimeout(connectWebSocket, 3000);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (ws) ws.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, [settings?.sound_enabled]);
 
   const fetchData = useCallback(async () => {
     try {
