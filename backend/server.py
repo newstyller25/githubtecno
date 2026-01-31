@@ -555,24 +555,6 @@ async def connect_to_blaze():
         wait_time = min(30, 5 + (blaze_state["connection_attempts"] // 3) * 5)
         logger.info(f"Reconectando à Blaze em {wait_time} segundos...")
         await asyncio.sleep(wait_time)
-                            
-                    except json.JSONDecodeError:
-                        pass
-                    except Exception as e:
-                        logger.error(f"Erro ao processar mensagem Blaze: {e}")
-                        
-        except websockets.exceptions.ConnectionClosed as e:
-            logger.warning(f"Conexão Blaze fechada: {e}")
-            blaze_state["connected"] = False
-            blaze_state["status"] = "disconnected"
-        except Exception as e:
-            logger.error(f"Erro na conexão Blaze: {e}")
-            blaze_state["connected"] = False
-            blaze_state["status"] = "error"
-        
-        # Aguardar antes de reconectar
-        logger.info("Reconectando à Blaze em 5 segundos...")
-        await asyncio.sleep(5)
 
 async def broadcast_to_clients(message: dict):
     """Envia mensagem para todos os clientes WebSocket conectados"""
