@@ -1182,6 +1182,67 @@ async def broadcast_to_clients(message: dict):
                 disconnected.add(client)
         connected_clients.difference_update(disconnected)
 
+# ==================== ENDPOINT PARA RECEBER RESULTADOS DA BLAZE ====================
+
+class BlazeResult(BaseModel):
+    color: str
+    roll: int
+    id: Optional[str] = None
+    timestamp: Optional[str] = None
+    server_seed: Optional[str] = None
+
+@api_router.post("/blaze/result")
+async def receive_blaze_result(result: BlazeResult):
+    """Recebe resultados em tempo real do conector Blaze"""
+    global blaze_state
+    
+    # Validar cor
+    if result.color not in ['red', 'black', 'white']:
+        raise HTTPException(status_code=400, detail="Cor inválida")
+    
+    # Atualizar estado
+    blaze_state["connected"] = True
+    blaze_state["status"] = "live"
+    blaze_state["last_color"] = result.color
+    blaze_state["last_roll"] = result.roll
+    blaze_state["last_result"] = result.model_dump()
+    
+    # Adicionar ao histórico
+    blaze_state["history"].insert(0, {
+        "color": result.color,
+        "roll": result.roll,
+        "timestamp": result.timestamp or datetime.now(timezone.utc).isoformat()
+    })
+    blaze_state["history"] = blaze_state["history"][:100]
+    
+    # Salvar no banco de dados
+    result_doc = {
+        "id": result.id or str(uuid.uuid4()),
+        "color": result.color,
+        "roll": result.roll,
+        "blaze_id": result.id,
+        "timestamp": result.timestamp or datetime.now(timezone.utc).isoformat(),
+        "simulated": False,
+        "source": "blaze_live"
+    }
+    await db.game_results.insert_one(result_doc)
+    
+    # Atualizar previsões pendentes
+    await update_predictions_with_result(result.color)
+    
+    # Notificar todos os clientes WebSocket
+    await broadcast_to_clients({
+        "type": "new_result",
+        "color": result.color,
+        "roll": result.roll,
+        "timestamp": result_doc["timestamp"],
+        "live": True
+    })
+    
+    logger.info(f"🎰 BLAZE LIVE: {result.color.upper()} (roll: {result.roll})")
+    
+    return {"status": "ok", "message": f"Resultado {result.color} registrado"}
+
 # ==================== WEBSOCKET ENDPOINT ====================
 
 @app.websocket("/ws/live")
