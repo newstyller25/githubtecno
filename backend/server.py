@@ -944,26 +944,6 @@ async def analyze_pattern_with_ai(history: List[dict], settings: dict, user_id: 
         'sequence_info': sequence_info,
         'strategy_used': selected_strategy
     }
-    
-    # Adicionar votação das estratégias
-    strategy_summary += "\n\n🗳️ **Votação das Estratégias**:\n"
-    for name, result in strategy_results.items():
-        emoji = "✅" if result["color"] == final_color else "❌"
-        strategy_summary += f"  {emoji} {STRATEGIES[name]['name']}: {result['color'].upper()} ({result['confidence']:.0f}%)\n"
-    
-    full_analysis = ai_text + strategy_summary
-    
-    return {
-        'recommended_color': final_color,
-        'red_probability': round(red_prob, 2),
-        'black_probability': round(black_prob, 2),
-        'white_probability': round(100 - red_prob - black_prob, 2),
-        'confidence': round(final_confidence, 2),
-        'martingale_levels': martingale_levels,
-        'ai_analysis': full_analysis,
-        'sequence_info': sequence_info,
-        'strategy_used': selected_strategy
-    }
 
 def generate_martingale_levels(base_confidence: float, max_levels: int) -> List[dict]:
     """Generate martingale level predictions"""
