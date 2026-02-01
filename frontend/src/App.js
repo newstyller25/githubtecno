@@ -886,11 +886,39 @@ const DashboardContent = ({ prediction, results, stats, settings, refreshPredict
           <div className="mt-6 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
             <h4 className="text-sm font-medium text-zinc-300 mb-2 flex items-center gap-2">
               <Activity size={16} className="text-red-500" />
-              Análise IA (GPT-5.2)
+              Análise IA Adaptativa (GPT-5.2)
+              {prediction?.strategy_used && (
+                <Badge variant="outline" className="ml-2 border-blue-500/30 text-blue-400">
+                  {prediction.strategy_used === 'ia_profunda' ? 'IA Profunda' :
+                   prediction.strategy_used === 'tendencia' ? 'Tendência' :
+                   prediction.strategy_used === 'reversao' ? 'Reversão' :
+                   prediction.strategy_used === 'alternancia' ? 'Alternância' :
+                   prediction.strategy_used === 'fibonacci' ? 'Fibonacci' :
+                   prediction.strategy_used === 'estatistica' ? 'Estatística' :
+                   prediction.strategy_used}
+                </Badge>
+              )}
             </h4>
-            <p className="text-zinc-400 text-sm whitespace-pre-line leading-relaxed">
-              {prediction?.ai_analysis || 'Carregando análise...'}
-            </p>
+            <div className="text-zinc-400 text-sm whitespace-pre-line leading-relaxed prose prose-invert prose-sm max-w-none">
+              {prediction?.ai_analysis?.split('\n').map((line, i) => {
+                if (line.includes('**')) {
+                  return <p key={i} className="font-semibold text-zinc-200">{line.replace(/\*\*/g, '')}</p>;
+                }
+                if (line.includes('✅')) {
+                  return <p key={i} className="text-green-400">{line}</p>;
+                }
+                if (line.includes('❌')) {
+                  return <p key={i} className="text-red-400">{line}</p>;
+                }
+                if (line.includes('⚠️')) {
+                  return <p key={i} className="text-yellow-400 font-medium">{line}</p>;
+                }
+                if (line.includes('🔄')) {
+                  return <p key={i} className="text-blue-400">{line}</p>;
+                }
+                return <p key={i}>{line}</p>;
+              }) || 'Carregando análise...'}
+            </div>
             {prediction?.sequence_info && (
               <div className="mt-3 flex items-center gap-2">
                 <Badge variant="outline" className="border-yellow-500/30 text-yellow-500">
