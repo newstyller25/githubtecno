@@ -996,6 +996,34 @@ async def get_blaze_status():
         "recent_results": blaze_state["history"][:10]
     }
 
+@api_router.get("/strategy/performance")
+async def get_strategy_performance(current_user: dict = Depends(get_current_user)):
+    """Retorna a performance de cada estratégia para o usuário"""
+    user_id = current_user['id']
+    perf = await get_user_strategy_performance(user_id)
+    
+    # Calcular win rate para cada estratégia
+    strategy_stats = {}
+    for name, data in perf.get("strategies", {}).items():
+        total = data["wins"] + data["losses"]
+        win_rate = (data["wins"] / total * 100) if total > 0 else 0
+        strategy_stats[name] = {
+            "name": STRATEGIES[name]["name"],
+            "description": STRATEGIES[name]["description"],
+            "wins": data["wins"],
+            "losses": data["losses"],
+            "win_rate": round(win_rate, 1),
+            "streak": data["streak"],
+            "total_games": total
+        }
+    
+    return {
+        "current_strategy": perf.get("current_strategy", "ia_profunda"),
+        "current_strategy_name": STRATEGIES.get(perf.get("current_strategy", "ia_profunda"), {}).get("name", "IA Profunda"),
+        "total_losses_streak": perf.get("total_losses_streak", 0),
+        "strategies": strategy_stats
+    }
+
 # ==================== SIMULATOR (Fallback) ====================
 
 async def run_simulator():
