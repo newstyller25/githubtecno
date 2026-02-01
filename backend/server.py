@@ -1037,18 +1037,38 @@ async def run_simulator():
         })
 
 async def update_predictions_with_result(actual_color: str):
-    """Update pending predictions with the actual result"""
+    """Update pending predictions with the actual result and track strategy performance"""
     pending = await db.predictions.find({'status': 'pending'}).to_list(100)
     
     for pred in pending:
         # Check if prediction is older than 2 minutes (expired)
         pred_time = datetime.fromisoformat(pred['timestamp'].replace('Z', '+00:00'))
         if datetime.now(timezone.utc) - pred_time > timedelta(minutes=2):
-            status = 'win' if pred['recommended_color'] == actual_color else 'loss'
+            won = pred['recommended_color'] == actual_color
+            status = 'win' if won else 'loss'
+            
             await db.predictions.update_one(
                 {'id': pred['id']},
                 {'$set': {'status': status, 'actual_result': actual_color}}
             )
+            
+            # Atualizar performance da estratégia usada
+            strategy_used = pred.get('strategy_used', 'ia_profunda')
+            user_id = pred.get('user_id')
+            
+            if user_id and strategy_used:
+                await update_strategy_performance(user_id, strategy_used, won)
+                
+                if not won:
+                    logger.info(f"LOSS detectado para usuário {user_id}! Estratégia {strategy_used} será reavaliada.")
+                    # Broadcast para o cliente que houve LOSS
+                    await broadcast_to_clients({
+                        "type": "strategy_update",
+                        "user_id": user_id,
+                        "loss_detected": True,
+                        "strategy": strategy_used,
+                        "message": f"LOSS detectado! Sistema reanalisando estratégias..."
+                    })
 
 # ==================== AUTH ENDPOINTS ====================
 
