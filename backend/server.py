@@ -86,6 +86,7 @@ class PredictionResponse(BaseModel):
     martingale_levels: List[MartingaleLevel]
     ai_analysis: str
     sequence_info: str
+    strategy_used: str = "default"
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "pending"  # "pending", "win", "loss"
     actual_result: Optional[str] = None
@@ -98,6 +99,45 @@ class HistoryItem(BaseModel):
     timestamp: str
     status: str
     actual_result: Optional[str]
+    strategy_used: Optional[str] = None
+
+# ==================== ESTRATÉGIAS DE ANÁLISE ====================
+
+STRATEGIES = {
+    "tendencia": {
+        "name": "Seguir Tendência",
+        "description": "Aposta na cor que está dominando o histórico recente",
+        "weight": 1.0
+    },
+    "reversao": {
+        "name": "Reversão à Média",
+        "description": "Aposta na cor oposta após sequência longa da mesma cor",
+        "weight": 1.0
+    },
+    "alternancia": {
+        "name": "Padrão Alternado",
+        "description": "Detecta e segue padrões de alternância entre cores",
+        "weight": 1.0
+    },
+    "fibonacci": {
+        "name": "Sequência Fibonacci",
+        "description": "Usa intervalos de Fibonacci para detectar ciclos",
+        "weight": 1.0
+    },
+    "estatistica": {
+        "name": "Análise Estatística Pura",
+        "description": "Baseado puramente em probabilidades matemáticas",
+        "weight": 1.0
+    },
+    "ia_profunda": {
+        "name": "IA Análise Profunda",
+        "description": "GPT-5.2 analisa padrões complexos e correlações",
+        "weight": 1.5
+    }
+}
+
+# Estado global das estratégias por usuário
+strategy_performance = {}  # user_id -> {strategy: {wins, losses, last_used}}
 
 class Statistics(BaseModel):
     total_predictions: int
