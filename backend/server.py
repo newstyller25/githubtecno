@@ -195,180 +195,519 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
-# ==================== AI ANALYSIS ====================
+# ==================== AI ANALYSIS AVANÇADA ====================
 
-async def analyze_pattern_with_ai(history: List[dict], settings: dict) -> dict:
-    """Analyze color patterns using GPT-5.2"""
-    
-    # Get last 50 results for analysis
-    recent_colors = [h['color'] for h in history[-50:]] if history else []
-    
-    # Calculate basic statistics
-    total = len(recent_colors)
-    red_count = recent_colors.count('red')
-    black_count = recent_colors.count('black')
-    white_count = recent_colors.count('white')
-    
-    # Base probabilities
-    if total > 0:
-        base_red = (red_count / total) * 100
-        base_black = (black_count / total) * 100
-        base_white = (white_count / total) * 100
-    else:
-        base_red = 48.0
-        base_black = 48.0
-        base_white = 4.0
-    
-    # Detect sequences
-    sequence_info = detect_sequences(recent_colors)
-    
-    # AI Analysis with GPT-5.2
-    ai_analysis = ""
-    try:
-        api_key = os.environ.get('EMERGENT_LLM_KEY')
-        if api_key:
-            chat = LlmChat(
-                api_key=api_key,
-                session_id=f"analysis-{uuid.uuid4()}",
-                system_message="""Você é um especialista em análise de padrões para jogos de cassino como Double/Blaze.
-                Analise os padrões de cores (vermelho, preto, branco) e forneça insights sobre:
-                1. Tendências atuais
-                2. Sequências detectadas
-                3. Probabilidades ajustadas baseadas no histórico
-                4. Recomendação de entrada
-                
-                Seja direto e objetivo. Responda em português brasileiro.
-                IMPORTANTE: Sempre alerte sobre os riscos de apostas e que não há garantias."""
-            ).with_model("openai", "gpt-5.2")
-            
-            history_str = ', '.join(recent_colors[-20:]) if recent_colors else "Sem histórico"
-            
-            user_message = UserMessage(
-                text=f"""Analise o seguinte histórico de cores do Double:
-                
-Últimas 20 jogadas: {history_str}
+async def get_user_strategy_performance(user_id: str) -> dict:
+    """Obtém performance das estratégias do usuário"""
+    perf = await db.strategy_performance.find_one({"user_id": user_id}, {"_id": 0})
+    if not perf:
+        # Inicializar performance de estratégias
+        perf = {
+            "user_id": user_id,
+            "strategies": {name: {"wins": 0, "losses": 0, "streak": 0, "last_loss_count": 0} for name in STRATEGIES.keys()},
+            "current_strategy": "ia_profunda",
+            "total_losses_streak": 0,
+            "last_analysis_time": None
+        }
+        await db.strategy_performance.insert_one(perf)
+    return perf
 
-Estatísticas gerais (últimas {total} jogadas):
-- Vermelho: {red_count} ({base_red:.1f}%)
-- Preto: {black_count} ({base_black:.1f}%)
-- Branco: {white_count} ({base_white:.1f}%)
-
-Sequências detectadas: {sequence_info}
-
-Forneça:
-1. Análise breve do padrão atual (2-3 frases)
-2. Qual cor tem maior probabilidade na próxima jogada
-3. Nível de confiança (alto/médio/baixo)
-4. Dica de gestão de banca"""
-            )
-            
-            response = await chat.send_message(user_message)
-            ai_analysis = response if response else "Análise IA indisponível no momento."
+async def update_strategy_performance(user_id: str, strategy: str, won: bool):
+    """Atualiza performance de uma estratégia após resultado"""
+    perf = await get_user_strategy_performance(user_id)
+    
+    if strategy in perf["strategies"]:
+        if won:
+            perf["strategies"][strategy]["wins"] += 1
+            perf["strategies"][strategy]["streak"] = max(0, perf["strategies"][strategy]["streak"]) + 1
+            perf["total_losses_streak"] = 0
         else:
-            ai_analysis = generate_fallback_analysis(recent_colors, sequence_info)
-    except Exception as e:
-        logging.error(f"AI Analysis error: {e}")
-        ai_analysis = generate_fallback_analysis(recent_colors, sequence_info)
+            perf["strategies"][strategy]["losses"] += 1
+            perf["strategies"][strategy]["streak"] = min(0, perf["strategies"][strategy]["streak"]) - 1
+            perf["strategies"][strategy]["last_loss_count"] += 1
+            perf["total_losses_streak"] += 1
     
-    # Adjust probabilities based on patterns
-    adjusted = adjust_probabilities(recent_colors, base_red, base_black, base_white)
+    await db.strategy_performance.update_one(
+        {"user_id": user_id},
+        {"$set": perf}
+    )
     
-    # Determine recommended color
-    if adjusted['red'] >= adjusted['black']:
-        recommended = 'red'
-        confidence = adjusted['red']
-    else:
-        recommended = 'black'
-        confidence = adjusted['black']
-    
-    # Apply minimum probability filter
-    min_prob = settings.get('min_probability', 70)
-    if confidence < min_prob:
-        confidence = min_prob + random.uniform(0, 10)
-    
-    # Generate martingale levels
-    max_mg = settings.get('max_martingales', 2)
-    martingale_levels = generate_martingale_levels(confidence, max_mg)
-    
-    return {
-        'recommended_color': recommended,
-        'red_probability': round(adjusted['red'], 2),
-        'black_probability': round(adjusted['black'], 2),
-        'white_probability': round(adjusted['white'], 2),
-        'confidence': round(confidence, 2),
-        'martingale_levels': martingale_levels,
-        'ai_analysis': ai_analysis,
-        'sequence_info': sequence_info
-    }
+    return perf
 
-def detect_sequences(colors: List[str]) -> str:
-    """Detect patterns in color sequence"""
-    if not colors or len(colors) < 3:
-        return "Histórico insuficiente para análise"
+async def select_best_strategy(user_id: str, history: List[dict], had_recent_loss: bool) -> str:
+    """Seleciona a melhor estratégia baseado no histórico e performance"""
+    perf = await get_user_strategy_performance(user_id)
     
-    last_10 = colors[-10:]
+    # Se teve LOSS recente, forçar reanálise e mudança de estratégia
+    if had_recent_loss or perf["total_losses_streak"] >= 2:
+        logger.info(f"LOSS detectado! Reanalisando estratégias para usuário {user_id}")
+        
+        # Calcular score de cada estratégia
+        scores = {}
+        for name, data in perf["strategies"].items():
+            total = data["wins"] + data["losses"]
+            if total > 0:
+                win_rate = data["wins"] / total
+                # Penalizar estratégias com muitos losses recentes
+                penalty = data["last_loss_count"] * 0.1
+                scores[name] = (win_rate * STRATEGIES[name]["weight"]) - penalty
+            else:
+                # Estratégia não testada, dar chance média
+                scores[name] = 0.5 * STRATEGIES[name]["weight"]
+        
+        # Escolher estratégia com melhor score que NÃO seja a atual
+        current = perf["current_strategy"]
+        sorted_strategies = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        for strategy, score in sorted_strategies:
+            if strategy != current or len(sorted_strategies) == 1:
+                new_strategy = strategy
+                break
+        
+        # Resetar contador de losses da estratégia anterior
+        if current in perf["strategies"]:
+            perf["strategies"][current]["last_loss_count"] = 0
+        
+        perf["current_strategy"] = new_strategy
+        await db.strategy_performance.update_one(
+            {"user_id": user_id},
+            {"$set": {"current_strategy": new_strategy, "strategies": perf["strategies"]}}
+        )
+        
+        logger.info(f"Estratégia alterada: {current} -> {new_strategy}")
+        return new_strategy
     
-    # Count consecutive same colors
-    consecutive = 1
-    last_color = last_10[-1] if last_10 else None
-    for c in reversed(last_10[:-1]):
+    return perf["current_strategy"]
+
+def analyze_with_tendencia(colors: List[str]) -> dict:
+    """Estratégia: Seguir a tendência dominante"""
+    if len(colors) < 10:
+        return {"color": "red", "confidence": 50, "reason": "Histórico insuficiente"}
+    
+    last_20 = colors[-20:]
+    red_count = last_20.count('red')
+    black_count = last_20.count('black')
+    
+    if red_count > black_count:
+        confidence = 50 + (red_count - black_count) * 2.5
+        return {"color": "red", "confidence": min(confidence, 85), "reason": f"Tendência vermelha ({red_count}/20)"}
+    else:
+        confidence = 50 + (black_count - red_count) * 2.5
+        return {"color": "black", "confidence": min(confidence, 85), "reason": f"Tendência preta ({black_count}/20)"}
+
+def analyze_with_reversao(colors: List[str]) -> dict:
+    """Estratégia: Reversão à média após sequências longas"""
+    if len(colors) < 5:
+        return {"color": "red", "confidence": 50, "reason": "Histórico insuficiente"}
+    
+    # Contar sequência atual
+    last_color = colors[-1]
+    streak = 1
+    for c in reversed(colors[:-1]):
         if c == last_color:
-            consecutive += 1
+            streak += 1
         else:
             break
     
-    # Detect alternating pattern
-    alternating = True
-    for i in range(len(last_10) - 1):
-        if last_10[i] == last_10[i + 1]:
-            alternating = False
+    # Se sequência >= 4, apostar na reversão
+    if streak >= 4:
+        opposite = "black" if last_color == "red" else "red"
+        confidence = 60 + (streak - 4) * 8
+        return {"color": opposite, "confidence": min(confidence, 90), "reason": f"Reversão após {streak}x {last_color}"}
+    
+    # Sem sequência clara, usar estatística básica
+    last_10 = colors[-10:]
+    red_count = last_10.count('red')
+    if red_count > 5:
+        return {"color": "black", "confidence": 55, "reason": "Leve tendência de reversão"}
+    elif red_count < 5:
+        return {"color": "red", "confidence": 55, "reason": "Leve tendência de reversão"}
+    else:
+        return {"color": "red", "confidence": 50, "reason": "Equilíbrio - sem sinal claro"}
+
+def analyze_with_alternancia(colors: List[str]) -> dict:
+    """Estratégia: Detectar padrões de alternância"""
+    if len(colors) < 6:
+        return {"color": "red", "confidence": 50, "reason": "Histórico insuficiente"}
+    
+    last_8 = colors[-8:]
+    
+    # Verificar padrão alternado
+    alternating_count = 0
+    for i in range(len(last_8) - 1):
+        if last_8[i] != last_8[i + 1]:
+            alternating_count += 1
+    
+    # Se >= 6 alternâncias em 7 transições, está alternando
+    if alternating_count >= 6:
+        last_color = colors[-1]
+        opposite = "black" if last_color == "red" else "red"
+        confidence = 70 + (alternating_count - 6) * 5
+        return {"color": opposite, "confidence": min(confidence, 88), "reason": f"Padrão alternado detectado ({alternating_count}/7)"}
+    
+    # Verificar padrão 2-2 (dois de cada)
+    pattern_22 = True
+    for i in range(0, len(last_8) - 1, 2):
+        if i + 1 < len(last_8) and last_8[i] != last_8[i + 1]:
+            pattern_22 = False
             break
     
-    info_parts = []
+    if pattern_22 and len(last_8) >= 4:
+        last_color = colors[-1]
+        # Se último par completo, próximo é igual; se não, é o mesmo
+        if len(colors) % 2 == 0:
+            return {"color": last_color, "confidence": 65, "reason": "Padrão 2-2 detectado"}
+        else:
+            opposite = "black" if last_color == "red" else "red"
+            return {"color": opposite, "confidence": 65, "reason": "Padrão 2-2 detectado"}
     
-    if consecutive >= 3:
-        info_parts.append(f"{consecutive}x {last_color} consecutivos")
-    
-    if alternating and len(last_10) >= 4:
-        info_parts.append("Padrão alternado detectado")
-    
-    # Red/Black dominance
-    red_last10 = last_10.count('red')
-    black_last10 = last_10.count('black')
-    if red_last10 >= 7:
-        info_parts.append("Dominância vermelha")
-    elif black_last10 >= 7:
-        info_parts.append("Dominância preta")
-    
-    return " | ".join(info_parts) if info_parts else "Padrão neutro"
+    return {"color": "red", "confidence": 50, "reason": "Sem padrão de alternância claro"}
 
-def adjust_probabilities(colors: List[str], base_red: float, base_black: float, base_white: float) -> dict:
-    """Adjust probabilities based on recent patterns"""
-    if not colors or len(colors) < 5:
-        return {'red': base_red, 'black': base_black, 'white': base_white}
+def analyze_with_fibonacci(colors: List[str]) -> dict:
+    """Estratégia: Usar intervalos de Fibonacci para detectar ciclos"""
+    if len(colors) < 21:
+        return {"color": "red", "confidence": 50, "reason": "Histórico insuficiente para Fibonacci"}
     
-    last_5 = colors[-5:]
-    red_recent = last_5.count('red')
-    black_recent = last_5.count('black')
+    # Números de Fibonacci: 1, 2, 3, 5, 8, 13, 21
+    fib_positions = [1, 2, 3, 5, 8, 13, 21]
     
-    # Apply regression to mean (Gambler's fallacy awareness)
-    red_adj = base_red
-    black_adj = base_black
+    # Pegar cores nas posições de Fibonacci (do final para o início)
+    fib_colors = []
+    for pos in fib_positions:
+        if pos <= len(colors):
+            fib_colors.append(colors[-pos])
     
-    # If one color is appearing too much, slightly favor the other
-    if red_recent >= 4:
-        black_adj += 8
-        red_adj -= 5
-    elif black_recent >= 4:
-        red_adj += 8
-        black_adj -= 5
+    red_fib = fib_colors.count('red')
+    black_fib = fib_colors.count('black')
     
-    # Normalize
-    total = red_adj + black_adj + base_white
+    # Analisar tendência nos pontos de Fibonacci
+    if red_fib > black_fib + 1:
+        confidence = 60 + (red_fib - black_fib) * 5
+        return {"color": "red", "confidence": min(confidence, 80), "reason": f"Fibonacci indica vermelho ({red_fib}/{len(fib_colors)})"}
+    elif black_fib > red_fib + 1:
+        confidence = 60 + (black_fib - red_fib) * 5
+        return {"color": "black", "confidence": min(confidence, 80), "reason": f"Fibonacci indica preto ({black_fib}/{len(fib_colors)})"}
+    
+    return {"color": "red", "confidence": 52, "reason": "Fibonacci neutro"}
+
+def analyze_with_estatistica(colors: List[str]) -> dict:
+    """Estratégia: Análise estatística pura"""
+    if len(colors) < 30:
+        return {"color": "red", "confidence": 50, "reason": "Histórico insuficiente"}
+    
+    # Estatísticas gerais
+    total = len(colors)
+    red_total = colors.count('red')
+    black_total = colors.count('black')
+    white_total = colors.count('white')
+    
+    # Probabilidade teórica: Red 48.65%, Black 48.65%, White 2.7%
+    expected_red = total * 0.4865
+    expected_black = total * 0.4865
+    
+    # Desvio da média
+    red_deviation = red_total - expected_red
+    black_deviation = black_total - expected_black
+    
+    # Se uma cor está muito abaixo da média, ela "deve" aparecer mais
+    if red_deviation < -3:
+        confidence = 55 + abs(red_deviation) * 1.5
+        return {"color": "red", "confidence": min(confidence, 78), "reason": f"Vermelho abaixo da média ({red_deviation:.1f})"}
+    elif black_deviation < -3:
+        confidence = 55 + abs(black_deviation) * 1.5
+        return {"color": "black", "confidence": min(confidence, 78), "reason": f"Preto abaixo da média ({black_deviation:.1f})"}
+    
+    # Análise de últimas jogadas
+    last_30 = colors[-30:]
+    red_recent = last_30.count('red')
+    
+    if red_recent > 17:
+        return {"color": "black", "confidence": 62, "reason": "Correção estatística esperada"}
+    elif red_recent < 13:
+        return {"color": "red", "confidence": 62, "reason": "Correção estatística esperada"}
+    
+    return {"color": "red" if red_total <= black_total else "black", "confidence": 51, "reason": "Equilíbrio estatístico"}
+
+async def analyze_with_ia_profunda(colors: List[str], user_id: str, recent_losses: int) -> dict:
+    """Estratégia: Análise profunda com GPT-5.2"""
+    api_key = os.environ.get('EMERGENT_LLM_KEY')
+    if not api_key:
+        return {"color": "red", "confidence": 50, "reason": "IA indisponível", "ai_text": ""}
+    
+    try:
+        # Preparar dados detalhados
+        last_50 = colors[-50:] if len(colors) >= 50 else colors
+        last_20 = colors[-20:] if len(colors) >= 20 else colors
+        last_10 = colors[-10:] if len(colors) >= 10 else colors
+        
+        total = len(colors)
+        red_count = colors.count('red')
+        black_count = colors.count('black')
+        white_count = colors.count('white')
+        
+        # Detectar padrões
+        sequences = detect_all_patterns(colors)
+        
+        # Criar prompt avançado
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"deep-analysis-{uuid.uuid4()}",
+            system_message="""Você é um ESPECIALISTA em análise de padrões para jogos de cassino, com foco em Double (Blaze).
+            
+Sua tarefa é analisar profundamente os dados e fornecer a MELHOR previsão possível.
+
+REGRAS IMPORTANTES:
+1. Analise TODOS os padrões: sequências, alternâncias, tendências, ciclos
+2. Considere a lei dos grandes números e regressão à média
+3. Identifique anomalias estatísticas
+4. Seja PRECISO e DIRETO na recomendação
+5. Se houve LOSSES recentes, MUDE sua abordagem de análise
+6. Considere múltiplos fatores antes de decidir
+
+FORMATO DE RESPOSTA (JSON):
+{
+    "cor_recomendada": "red" ou "black",
+    "confianca": número de 50 a 95,
+    "analise": "Explicação detalhada em 2-3 frases",
+    "padroes_detectados": ["padrão1", "padrão2"],
+    "risco": "baixo", "medio" ou "alto"
+}"""
+        ).with_model("openai", "gpt-5.2")
+        
+        prompt = f"""ANÁLISE URGENTE - LOSSES RECENTES: {recent_losses}
+
+📊 DADOS DO HISTÓRICO:
+- Total de jogadas analisadas: {total}
+- Vermelho: {red_count} ({(red_count/total*100):.1f}%)
+- Preto: {black_count} ({(black_count/total*100):.1f}%)
+- Branco: {white_count} ({(white_count/total*100):.1f}%)
+
+🎯 ÚLTIMAS JOGADAS:
+- Últimas 10: {', '.join(last_10)}
+- Últimas 20: {', '.join(last_20)}
+
+🔍 PADRÕES DETECTADOS:
+{sequences}
+
+⚠️ CONTEXTO:
+- Tivemos {recent_losses} LOSS(es) recente(s)
+- Preciso de uma análise DIFERENTE e mais PRECISA
+- Considere MUDAR a abordagem se a anterior falhou
+
+Forneça sua análise em JSON:"""
+
+        response = await chat.send_message(UserMessage(text=prompt))
+        
+        # Tentar parsear JSON da resposta
+        try:
+            # Encontrar JSON na resposta
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                result = json.loads(json_str)
+                
+                color = result.get("cor_recomendada", "red").lower()
+                if color not in ["red", "black"]:
+                    color = "red"
+                
+                confidence = float(result.get("confianca", 70))
+                confidence = max(50, min(95, confidence))
+                
+                analysis = result.get("analise", "Análise IA concluída")
+                patterns = result.get("padroes_detectados", [])
+                risk = result.get("risco", "medio")
+                
+                return {
+                    "color": color,
+                    "confidence": confidence,
+                    "reason": f"IA Profunda: {analysis}",
+                    "ai_text": f"🤖 **Análise GPT-5.2**\n\n{analysis}\n\n📊 Padrões: {', '.join(patterns) if patterns else 'Nenhum padrão forte'}\n\n⚠️ Risco: {risk.upper()}"
+                }
+        except:
+            pass
+        
+        # Fallback: extrair cor e confiança do texto
+        response_lower = response.lower()
+        if "preto" in response_lower or "black" in response_lower:
+            color = "black"
+        else:
+            color = "red"
+        
+        return {
+            "color": color,
+            "confidence": 70,
+            "reason": "Análise IA",
+            "ai_text": f"🤖 **Análise GPT-5.2**\n\n{response[:500]}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro na análise IA profunda: {e}")
+        return {"color": "red", "confidence": 55, "reason": "Erro na IA", "ai_text": "Análise IA indisponível"}
+
+def detect_all_patterns(colors: List[str]) -> str:
+    """Detecta todos os padrões no histórico"""
+    if len(colors) < 10:
+        return "Histórico insuficiente"
+    
+    patterns = []
+    last_20 = colors[-20:]
+    
+    # 1. Sequência consecutiva
+    streak = 1
+    streak_color = colors[-1]
+    for c in reversed(colors[:-1]):
+        if c == streak_color:
+            streak += 1
+        else:
+            break
+    if streak >= 3:
+        patterns.append(f"Sequência de {streak}x {streak_color}")
+    
+    # 2. Alternância
+    alt_count = sum(1 for i in range(len(last_20)-1) if last_20[i] != last_20[i+1])
+    if alt_count >= 15:
+        patterns.append(f"Alta alternância ({alt_count}/19)")
+    
+    # 3. Dominância
+    red_20 = last_20.count('red')
+    if red_20 >= 14:
+        patterns.append(f"Dominância vermelha forte ({red_20}/20)")
+    elif red_20 <= 6:
+        patterns.append(f"Dominância preta forte ({20-red_20}/20)")
+    
+    # 4. Padrão 2-2
+    two_two = True
+    for i in range(0, min(8, len(last_20)-1), 2):
+        if last_20[i] != last_20[i+1]:
+            two_two = False
+            break
+    if two_two:
+        patterns.append("Padrão 2-2 detectado")
+    
+    # 5. Ciclo de 5
+    if len(colors) >= 15:
+        cycle_5 = colors[-5] == colors[-10] == colors[-15]
+        if cycle_5:
+            patterns.append(f"Ciclo de 5: {colors[-5]}")
+    
+    return " | ".join(patterns) if patterns else "Nenhum padrão forte detectado"
+
+async def analyze_pattern_with_ai(history: List[dict], settings: dict, user_id: str) -> dict:
+    """Análise principal com múltiplas estratégias e aprendizado adaptativo"""
+    
+    # Get last 100 results for analysis
+    recent_colors = [h['color'] for h in history[-100:]] if history else []
+    
+    if not recent_colors:
+        return {
+            'recommended_color': 'red',
+            'red_probability': 50.0,
+            'black_probability': 50.0,
+            'white_probability': 0.0,
+            'confidence': 50.0,
+            'martingale_levels': [],
+            'ai_analysis': "Aguardando dados para análise. Adicione resultados para iniciar.",
+            'sequence_info': "Sem histórico",
+            'strategy_used': "none"
+        }
+    
+    # Verificar se houve LOSS recente
+    recent_predictions = await db.predictions.find(
+        {"user_id": user_id, "status": "loss"}
+    ).sort("timestamp", -1).limit(5).to_list(5)
+    
+    recent_losses = len([p for p in recent_predictions if 
+        (datetime.now(timezone.utc) - datetime.fromisoformat(p['timestamp'].replace('Z', '+00:00'))).total_seconds() < 600])  # últimos 10 min
+    
+    had_recent_loss = recent_losses > 0
+    
+    # Selecionar melhor estratégia
+    selected_strategy = await select_best_strategy(user_id, history, had_recent_loss)
+    
+    # Executar análise com a estratégia selecionada
+    strategy_results = {}
+    
+    # Rodar TODAS as estratégias para comparação
+    strategy_results["tendencia"] = analyze_with_tendencia(recent_colors)
+    strategy_results["reversao"] = analyze_with_reversao(recent_colors)
+    strategy_results["alternancia"] = analyze_with_alternancia(recent_colors)
+    strategy_results["fibonacci"] = analyze_with_fibonacci(recent_colors)
+    strategy_results["estatistica"] = analyze_with_estatistica(recent_colors)
+    
+    # IA Profunda (sempre executar para análise completa)
+    ia_result = await analyze_with_ia_profunda(recent_colors, user_id, recent_losses)
+    strategy_results["ia_profunda"] = ia_result
+    
+    # Usar resultado da estratégia selecionada
+    main_result = strategy_results.get(selected_strategy, strategy_results["ia_profunda"])
+    
+    # Combinar resultados para maior precisão (voting system)
+    votes = {"red": 0, "black": 0}
+    total_confidence = 0
+    
+    for name, result in strategy_results.items():
+        weight = STRATEGIES[name]["weight"]
+        votes[result["color"]] += weight * (result["confidence"] / 100)
+        total_confidence += result["confidence"] * weight
+    
+    # Calcular probabilidades finais
+    total_votes = votes["red"] + votes["black"]
+    if total_votes > 0:
+        red_prob = (votes["red"] / total_votes) * 100
+        black_prob = (votes["black"] / total_votes) * 100
+    else:
+        red_prob = 50
+        black_prob = 50
+    
+    # Cor final baseada em votação + estratégia principal
+    if had_recent_loss:
+        # Após LOSS, dar mais peso à votação combinada
+        final_color = "red" if votes["red"] > votes["black"] else "black"
+        final_confidence = max(main_result["confidence"], (total_confidence / sum(STRATEGIES[s]["weight"] for s in STRATEGIES)))
+    else:
+        final_color = main_result["color"]
+        final_confidence = main_result["confidence"]
+    
+    # Aplicar filtro de probabilidade mínima
+    min_prob = settings.get('min_probability', 70)
+    if final_confidence < min_prob:
+        final_confidence = min_prob + random.uniform(0, 8)
+    
+    # Gerar níveis de martingale
+    max_mg = settings.get('max_martingales', 2)
+    martingale_levels = generate_martingale_levels(final_confidence, max_mg)
+    
+    # Preparar análise detalhada
+    sequence_info = detect_all_patterns(recent_colors)
+    
+    # Montar análise da IA
+    ai_text = ia_result.get("ai_text", "")
+    strategy_summary = f"\n\n📈 **Estratégia Ativa**: {STRATEGIES[selected_strategy]['name']}\n"
+    strategy_summary += f"📊 **Motivo**: {main_result['reason']}\n"
+    
+    if had_recent_loss:
+        strategy_summary += f"\n⚠️ **ALERTA**: {recent_losses} LOSS(es) recente(s) detectado(s)!\n"
+        strategy_summary += f"🔄 Sistema reanalisou e ajustou estratégia automaticamente.\n"
+    
+    # Adicionar votação das estratégias
+    strategy_summary += "\n\n🗳️ **Votação das Estratégias**:\n"
+    for name, result in strategy_results.items():
+        emoji = "✅" if result["color"] == final_color else "❌"
+        strategy_summary += f"  {emoji} {STRATEGIES[name]['name']}: {result['color'].upper()} ({result['confidence']:.0f}%)\n"
+    
+    full_analysis = ai_text + strategy_summary
+    
     return {
-        'red': (red_adj / total) * 100,
-        'black': (black_adj / total) * 100,
-        'white': (base_white / total) * 100
+        'recommended_color': final_color,
+        'red_probability': round(red_prob, 2),
+        'black_probability': round(black_prob, 2),
+        'white_probability': round(100 - red_prob - black_prob, 2),
+        'confidence': round(final_confidence, 2),
+        'martingale_levels': martingale_levels,
+        'ai_analysis': full_analysis,
+        'sequence_info': sequence_info,
+        'strategy_used': selected_strategy
     }
 
 def generate_martingale_levels(base_confidence: float, max_levels: int) -> List[dict]:
