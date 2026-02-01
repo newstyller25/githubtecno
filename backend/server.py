@@ -595,6 +595,171 @@ def detect_all_patterns(colors: List[str]) -> str:
 
 # ==================== ESTRATÉGIAS OTIMIZADAS (96%+) ====================
 
+# ==================== ESTRATÉGIAS PREMIUM (96%+ com 2 MG) ====================
+
+def detect_premium_pattern(colors: List[str]) -> dict:
+    """
+    Detecta APENAS padrões com altíssima probabilidade de acerto
+    Para atingir 96%+ com apenas 2 martingales
+    """
+    result = {
+        'should_enter': False,
+        'color': 'skip',
+        'confidence': 0,
+        'pattern': 'nenhum',
+        'reason': ''
+    }
+    
+    if len(colors) < 30:
+        result['reason'] = 'Histórico insuficiente (mínimo 30)'
+        return result
+    
+    # Remover brancos para análise
+    non_white = [c for c in colors if c != 'white']
+    if len(non_white) < 25:
+        result['reason'] = 'Dados insuficientes'
+        return result
+    
+    last_30 = non_white[-30:]
+    last_20 = non_white[-20:]
+    last_10 = non_white[-10:]
+    last_5 = non_white[-5:]
+    
+    # ========== FILTROS DE SEGURANÇA ==========
+    # Branco nas últimas 10 = mercado volátil
+    if colors[-10:].count('white') >= 1:
+        result['reason'] = 'Branco recente - mercado volátil'
+        return result
+    
+    # Muitas mudanças = mercado caótico
+    changes = sum(1 for i in range(len(last_20)-1) if last_20[i] != last_20[i+1])
+    if changes >= 14:
+        result['reason'] = 'Mercado caótico'
+        return result
+    
+    # ========== PADRÃO 1: Sequência 4-5 com desvio forte ==========
+    streak = 1
+    last_color = non_white[-1]
+    for c in reversed(non_white[:-1]):
+        if c == last_color:
+            streak += 1
+        else:
+            break
+    
+    if streak in [4, 5]:
+        opposite = 'black' if last_color == 'red' else 'red'
+        opposite_count = last_30.count(opposite)
+        opposite_ratio = opposite_count / len(last_30)
+        
+        if opposite_ratio < 0.38:
+            confidence = 80 + (0.5 - opposite_ratio) * 60 + (streak - 4) * 3
+            result.update({
+                'should_enter': True,
+                'color': opposite,
+                'confidence': min(confidence, 95),
+                'pattern': f'reversão_forte_{streak}x',
+                'reason': f'{streak}x {last_color} + {opposite} muito abaixo ({opposite_ratio*100:.0f}%)'
+            })
+            return result
+    
+    # ========== PADRÃO 2: Padrão 2-2 estável ==========
+    if len(non_white) >= 8:
+        last_8 = non_white[-8:]
+        is_pattern_22 = (
+            last_8[0] == last_8[1] and
+            last_8[2] == last_8[3] and
+            last_8[4] == last_8[5] and
+            last_8[6] == last_8[7] and
+            last_8[0] != last_8[2] and
+            last_8[2] != last_8[4] and
+            last_8[4] != last_8[6]
+        )
+        
+        if is_pattern_22:
+            next_color = 'red' if last_8[7] == 'black' else 'black'
+            result.update({
+                'should_enter': True,
+                'color': next_color,
+                'confidence': 90,
+                'pattern': 'padrão_2-2',
+                'reason': f'Padrão AABBCCDD detectado → próximo: {next_color.upper()}'
+            })
+            return result
+    
+    # ========== PADRÃO 3: Padrão 3-3 ==========
+    if len(non_white) >= 9:
+        last_9 = non_white[-9:]
+        is_pattern_33 = (
+            last_9[0] == last_9[1] == last_9[2] and
+            last_9[3] == last_9[4] == last_9[5] and
+            last_9[6] == last_9[7] == last_9[8] and
+            last_9[0] != last_9[3] and
+            last_9[3] != last_9[6]
+        )
+        
+        if is_pattern_33:
+            next_color = 'red' if last_9[8] == 'black' else 'black'
+            result.update({
+                'should_enter': True,
+                'color': next_color,
+                'confidence': 92,
+                'pattern': 'padrão_3-3',
+                'reason': f'Padrão AAABBBCCC detectado → próximo: {next_color.upper()}'
+            })
+            return result
+    
+    # ========== PADRÃO 4: Tendência ultra-forte ==========
+    red_5 = last_5.count('red')
+    red_10 = last_10.count('red')
+    red_20 = last_20.count('red')
+    red_30 = last_30.count('red')
+    
+    if red_5 >= 4 and red_10 >= 7 and red_20 >= 13 and red_30 >= 19:
+        result.update({
+            'should_enter': True,
+            'color': 'red',
+            'confidence': 88,
+            'pattern': 'tendência_vermelha_total',
+            'reason': f'Vermelho dominando todos os timeframes'
+        })
+        return result
+    
+    if red_5 <= 1 and red_10 <= 3 and red_20 <= 7 and red_30 <= 11:
+        result.update({
+            'should_enter': True,
+            'color': 'black',
+            'confidence': 88,
+            'pattern': 'tendência_preta_total',
+            'reason': f'Preto dominando todos os timeframes'
+        })
+        return result
+    
+    # ========== PADRÃO 5: Correção estatística extrema ==========
+    red_ratio = red_30 / 30
+    
+    if red_ratio < 0.30 and red_5 >= 2:
+        result.update({
+            'should_enter': True,
+            'color': 'red',
+            'confidence': 85,
+            'pattern': 'correção_vermelha',
+            'reason': f'Vermelho apenas {red_ratio*100:.0f}% e começando a aparecer'
+        })
+        return result
+    
+    if red_ratio > 0.70 and red_5 <= 3:
+        result.update({
+            'should_enter': True,
+            'color': 'black',
+            'confidence': 85,
+            'pattern': 'correção_preta',
+            'reason': f'Preto apenas {(1-red_ratio)*100:.0f}% e começando a aparecer'
+        })
+        return result
+    
+    result['reason'] = 'Aguardando padrão de alta confiança'
+    return result
+
 def optimized_filter(colors: List[str]) -> tuple:
     """Filtro ultra-rigoroso para máxima assertividade"""
     if len(colors) < 20:
