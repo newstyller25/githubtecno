@@ -1,64 +1,78 @@
-# Blaze AI Bot - PRD (Product Requirements Document)
+# Blaze AI Bot - PRD v2.0 (Atualizado)
 
 ## Projeto
 **Nome**: Blaze AI Bot  
-**Versão**: 2.0  
+**Versão**: 2.1 - Sistema Adaptativo  
 **Data**: 01/02/2026
 
 ---
 
 ## Problema Original
-Criar um robô melhorado com IA para análise de padrões vermelho/preto do jogo Double (Blaze), com:
-- Atualização automática de sinais
-- Confirmação de WIN/LOSS em tempo real
-- Integração com dados da Blaze
+Criar um robô com IA para análise de padrões vermelho/preto que:
+- Faça análises precisas
+- Após LOSS, pare, reanalisar e mude de estratégia
+- Melhore a precisão continuamente
 
 ---
 
-## Arquitetura
+## Sistema de Múltiplas Estratégias (NOVO)
 
-### Backend (FastAPI + MongoDB)
-- **server.py**: API REST + WebSocket para tempo real
-- **Banco**: MongoDB (users, predictions, game_results, user_settings)
-- **IA**: GPT-5.2 via Emergent LLM Key
-- **WebSocket Blaze**: Tentativa de conexão ao vivo (com fallback para simulação)
+### Estratégias Implementadas
+1. **Seguir Tendência** - Aposta na cor dominante recente
+2. **Reversão à Média** - Aposta na cor oposta após sequências longas
+3. **Padrão Alternado** - Detecta e segue alternâncias entre cores
+4. **Sequência Fibonacci** - Usa intervalos de Fibonacci para ciclos
+5. **Análise Estatística Pura** - Probabilidades matemáticas
+6. **IA Análise Profunda** - GPT-5.2 analisa padrões complexos
 
-### Frontend (React + Tailwind)
-- **App.js**: SPA com 4 abas (Dashboard, Histórico, Estatísticas, Configurações)
-- **WebSocket**: Recebe atualizações em tempo real
-- **Design**: Tema escuro premium estilo trading/cassino
+### Sistema de Votação
+- Todas as estratégias rodam em paralelo
+- Cada uma "vota" em uma cor com peso baseado na confiança
+- Resultado final combina estratégia principal + votação
 
----
-
-## O Que Foi Implementado ✅
-
-| Feature | Status | Data |
-|---------|--------|------|
-| Análise IA com GPT-5.2 | ✅ | 01/02/2026 |
-| Círculos de probabilidade (vermelho/preto/branco) | ✅ | 01/02/2026 |
-| Tabela de martingales com níveis | ✅ | 01/02/2026 |
-| Análise detalhada da IA | ✅ | 01/02/2026 |
-| Sistema de login/autenticação JWT | ✅ | 01/02/2026 |
-| Histórico de análises com WIN/LOSS | ✅ | 01/02/2026 |
-| Estatísticas com gráficos | ✅ | 01/02/2026 |
-| Configurações (martingales, probabilidade, som) | ✅ | 01/02/2026 |
-| WebSocket para atualizações em tempo real | ✅ | 01/02/2026 |
-| Conexão WebSocket com Blaze (tentativa) | ✅ | 01/02/2026 |
-| Simulador automático (fallback) | ✅ | 01/02/2026 |
-| Entrada manual de resultados | ✅ | 01/02/2026 |
+### Aprendizado Adaptativo
+- Após cada LOSS:
+  1. Sistema detecta automaticamente
+  2. Analisa performance de cada estratégia
+  3. Muda para estratégia com melhor win rate
+  4. Penaliza estratégias com muitos losses recentes
 
 ---
 
-## Status da Conexão com Blaze
+## Features Implementadas
 
-A conexão WebSocket direta com a Blaze (`wss://api-v2.blaze.com`) está implementada, mas pode ser bloqueada pelo servidor da Blaze por questões de autenticação/CORS.
+| Feature | Status |
+|---------|--------|
+| Análise IA GPT-5.2 | ✅ |
+| 6 Estratégias de análise | ✅ |
+| Sistema de votação | ✅ |
+| Detecção automática de LOSS | ✅ |
+| Mudança automática de estratégia | ✅ |
+| Tracking de performance por estratégia | ✅ |
+| Dashboard com análise detalhada | ✅ |
+| Histórico de WIN/LOSS | ✅ |
+| Configurações personalizáveis | ✅ |
+| WebSocket tempo real | ✅ |
 
-**Modo Atual**: Simulação com possibilidade de entrada manual
+---
 
-**Como usar**:
-1. Acompanhe o jogo Double na Blaze
-2. Quando sair um resultado, clique na cor correspondente no painel
-3. O sistema atualiza o WIN/LOSS automaticamente e gera nova análise
+## Como Funciona o Sistema Adaptativo
+
+```
+1. Usuário solicita análise
+   ↓
+2. Sistema executa TODAS as 6 estratégias
+   ↓
+3. Cada estratégia "vota" em uma cor
+   ↓
+4. Sistema combina votos + estratégia principal
+   ↓
+5. Gera recomendação final
+   ↓
+6. Após resultado real:
+   - WIN: Incrementa score da estratégia
+   - LOSS: Detecta, reanalisar, muda estratégia
+```
 
 ---
 
@@ -68,37 +82,21 @@ A conexão WebSocket direta com a Blaze (`wss://api-v2.blaze.com`) está impleme
 
 ---
 
-## Backlog Priorizado
+## Próximos Passos
 
-### P0 (Implementado)
-- ✅ Análise IA com GPT-5.2
-- ✅ Dashboard funcional
-- ✅ Autenticação
-- ✅ Entrada manual de resultados
+### P0 (Prioridade)
+- [ ] Conectar com API real da Blaze (WebSocket)
+- [ ] Melhorar detecção de padrões
 
-### P1 (Alta Prioridade) - Próximos
-- [ ] Usar biblioteca Node.js @viniciusgdr/Blaze em microserviço
-- [ ] Notificações push com Firebase
-- [ ] Alertas sonoros configuráveis
-
-### P2 (Média Prioridade)
+### P1 
+- [ ] Bot Telegram para sinais
+- [ ] Notificações push
 - [ ] Backtesting com dados históricos
-- [ ] Exportar relatórios PDF
-- [ ] Múltiplas estratégias
-
-### P3 (Baixa Prioridade)
-- [ ] Bot Telegram
-- [ ] App mobile nativo
 
 ---
 
 ## Notas Técnicas
-- **Emergent LLM Key**: sk-emergent-7DfAaA78fC7A6426c4
-- **Modelo IA**: GPT-5.2 (OpenAI via emergentintegrations)
-- **Portas**: Backend 8001, Frontend 3000
-- **Database**: MongoDB local
-
----
-
-## Aviso Legal
-As análises são baseadas em IA e estatística, sem garantia de resultados. Aposte com responsabilidade.
+- **IA**: GPT-5.2 via Emergent LLM Key
+- **6 Estratégias** rodando em paralelo
+- **Sistema de votação** para maior precisão
+- **Auto-ajuste** após cada LOSS
