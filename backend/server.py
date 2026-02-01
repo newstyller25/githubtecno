@@ -1138,7 +1138,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 @api_router.get("/prediction", response_model=PredictionResponse)
 async def get_current_prediction(current_user: dict = Depends(get_current_user)):
-    """Get current AI prediction"""
+    """Get current AI prediction with adaptive strategy"""
     user_id = current_user['id']
     
     # Get user settings
@@ -1150,8 +1150,8 @@ async def get_current_prediction(current_user: dict = Depends(get_current_user))
     history = await db.game_results.find({}, {"_id": 0}).sort("timestamp", -1).limit(100).to_list(100)
     history.reverse()  # Oldest first
     
-    # Generate AI analysis
-    analysis = await analyze_pattern_with_ai(history, settings)
+    # Generate AI analysis with adaptive strategy
+    analysis = await analyze_pattern_with_ai(history, settings, user_id)
     
     # Create prediction
     prediction = {
@@ -1165,6 +1165,7 @@ async def get_current_prediction(current_user: dict = Depends(get_current_user))
         "martingale_levels": analysis['martingale_levels'],
         "ai_analysis": analysis['ai_analysis'],
         "sequence_info": analysis['sequence_info'],
+        "strategy_used": analysis['strategy_used'],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
         "actual_result": None
