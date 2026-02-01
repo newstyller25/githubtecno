@@ -1,0 +1,13 @@
+{
+  "name": "blaze-connector",
+  "version": "1.0.0",
+  "description": "Blaze WebSocket Connector",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.2",
+    "axios": "^1.6.0"
+  }
+}
